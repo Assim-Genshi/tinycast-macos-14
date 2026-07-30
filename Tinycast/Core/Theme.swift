@@ -127,13 +127,23 @@ struct KeyCapChip: View {
             .background {
                 switch style {
                 case .filled: shape.fill(Theme.Colors.controlSurface)
-                case .outline: shape.strokeBorder(Theme.Colors.border, lineWidth: 1)
+                case .outline: shape.strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1)
                 }
             }
     }
 }
 
+struct GlassStyle {
+    static let regular = GlassStyle()
+    func interactive() -> GlassStyle { self }
+    func tint(_ color: Color) -> GlassStyle { self }
+}
+
 extension View {
+    func glassEffect(_ style: GlassStyle = .regular, in shape: some Shape) -> some View {
+        self.background(.regularMaterial, in: shape)
+    }
+
     /// A floating Liquid Glass control surface (action group + menu button), interactive for native lensing with a whitish frost tint so it reads brighter than clear glass.
     func frosted(in shape: some Shape) -> some View {
         glassEffect(.regular.interactive().tint(Theme.Colors.glassFrost), in: shape)

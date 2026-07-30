@@ -26,6 +26,8 @@ struct RootPaletteView: View {
     @State private var scrollToken = UUID()
     /// The emoji grid's scroll request — the lazy grid needs distinct reset/follow scroll ops, unlike the 1-D lists that recenter fine on `scrollToken`.
     @State private var emojiScroll = EmojiScrollIntent(kind: .top)
+    /// Bumped to trigger a native spring keyframe bounce and shadow flare when switching palette modes via Tab.
+    @State private var modeSwitchTrigger = 0
 
     private var isQueryEmpty: Bool { vm.query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -34,7 +36,7 @@ struct RootPaletteView: View {
 
     /// Favorite slots shown in the compact bar: up to 5 launchable apps, or the first 4 plus an overflow "…" that expands the window. Evaluated only in the compact render and on the rare ⌘N keypress.
     private var compactFavoriteSlots: [CompactFavoriteSlot] {
-        let favs = favorites.ordered(appIndex.matches("").filter(visibility.isVisible)).favorites
+        let favs = favorites.ordered(appIndex.matches("").filter { visibility.isVisible($0) }).favorites
         if favs.count <= 5 { return favs.map(CompactFavoriteSlot.app) }
         return favs.prefix(4).map(CompactFavoriteSlot.app) + [.more]
     }
@@ -42,7 +44,7 @@ struct RootPaletteView: View {
     /// Ordered launcher results (the single source of truth for list, selection and activation): empty query pins favorites to the top, otherwise plain ranked matches.
     private var appResults: [AppEntry] {
         // Visibility filtering stays downstream of `matches` so its one-deep memo cache is never keyed on hidden state; hidden favorites drop out here too.
-        let base = appIndex.matches(vm.query).filter(visibility.isVisible)
+        let base = appIndex.matches(vm.query).filter { visibility.isVisible($0) }
         guard isQueryEmpty, !favorites.keys.isEmpty else { return base }
         let split = favorites.ordered(base)
         return split.favorites + split.rest
@@ -167,269 +169,289 @@ struct RootPaletteView: View {
     }
 
     var body: some View {
-        // Filter once per render for the active mode only, so the matcher/search doesn't run several times per render (rare event handlers use the computed properties above).
+        let clipFollow = ClipFollowKey(id: store.items.first?.id, token: vm.followToken)
+
+        let contentWithEvents = attachEventHandlers(to: styledContent, clipFollow: clipFollow)
+        return attachKeyPressHandlers(to: contentWithEvents)
+    }
+
+    @ViewBuilder
+    private func attachEventHandlers(to content: some View, clipFollow: ClipFollowKey) -> some View {
+        content
+            .onChange(of: vm.focusToken) {
+                searchFocused = true
+                showActions = false
+                showAppMenu = false
+            }
+            .onChange(of: vm.query) {
+                Task { @MainActor in vm.selection = 0 }
+                scrollToken = UUID()
+                emojiScroll = EmojiScrollIntent(kind: .top)
+            }
+            .onChange(of: vm.mode) {
+                Task { @MainActor in vm.selection = 0 }
+                showActions = false
+                scrollToken = UUID()
+                emojiScroll = EmojiScrollIntent(kind: .top)
+                modeSwitchTrigger += 1
+            }
+            .onChange(of: vm.resetToken) {
+                scrollToken = UUID()
+                emojiScroll = EmojiScrollIntent(kind: .top)
+            }
+            .onChange(of: showActions) {
+                if showActions {
+                    showAppMenu = false
+                    menuSelection = 0
+                }
+                vm.menuOpen = menuOpen
+            }
+            .onChange(of: showAppMenu) {
+                if showAppMenu {
+                    showActions = false
+                    menuSelection = 0
+                }
+                vm.menuOpen = menuOpen
+            }
+            .onChange(of: clipFollow) { old, new in
+                guard vm.mode == .clipboard, old.id != nil else { return }
+                if isQueryEmpty, old.id != new.id, let id = new.id {
+                    let clips = clipResults
+                    if let index = clips.firstIndex(where: { $0.id == id }) {
+                        Task { @MainActor in vm.selection = index }
+                    }
+                }
+                scrollToken = UUID()
+            }
+            .onAppear { searchFocused = true }
+            .onChange(of: core.paletteIsCollapsed) { core.syncPaletteSize() }
+    }
+
+    @ViewBuilder
+    private func attachKeyPressHandlers(to content: some View) -> some View {
+        content
+            .onKeyPress(keys: ["1", "2", "3", "4", "5"], phases: .down) { press in
+                guard isCollapsed, settings.showFavoritesInCompactMode,
+                    press.modifiers.contains(.command),
+                    let digit = press.key.character.wholeNumberValue
+                else { return .ignored }
+                let slots = compactFavoriteSlots
+                let index = digit - 1
+                guard slots.indices.contains(index) else { return .ignored }
+                switch slots[index] {
+                case .app(let app): core.launch(app)
+                case .more: core.expandFromCompact()
+                }
+                return .handled
+            }
+            .onKeyPress(.downArrow) {
+                if isCollapsed {
+                    vm.selection = 0
+                    core.expandFromCompact()
+                    return .handled
+                }
+                if menuOpen {
+                    moveMenu(1)
+                    return .handled
+                }
+                if vm.mode == .emoji { moveEmojiRow(1) } else { move(1) }
+                return .handled
+            }
+            .onKeyPress(.upArrow) {
+                if isCollapsed { return .ignored }
+                if menuOpen {
+                    moveMenu(-1)
+                    return .handled
+                }
+                if vm.mode == .emoji { moveEmojiRow(-1) } else { move(-1) }
+                return .handled
+            }
+            .onKeyPress(.leftArrow) {
+                if menuOpen { return .handled }
+                guard vm.mode == .emoji else { return .ignored }
+                move(-1)
+                return .handled
+            }
+            .onKeyPress(.rightArrow) {
+                if menuOpen { return .handled }
+                guard vm.mode == .emoji else { return .ignored }
+                move(1)
+                return .handled
+            }
+            .onKeyPress(keys: [.return], phases: .down) { press in
+                let command = press.modifiers.contains(.command)
+                let option = press.modifiers.contains(.option)
+                if menuOpen, !command, !option {
+                    activateMenuItem(menuSelection)
+                    return .handled
+                }
+                guard command || option else { return .ignored }
+                switch vm.mode {
+                case .emoji:
+                    guard emojiResults.indices.contains(selection) else { return .ignored }
+                    if command {
+                        core.copyEmoji(emojiResults[selection])
+                    } else {
+                        core.pasteEmojiKeepingWindowOpen(emojiResults[selection])
+                    }
+                case .clipboard:
+                    guard command, clipResults.indices.contains(selection) else { return .ignored }
+                    core.copyToClipboard(clipResults[selection])
+                case .calculatorHistory:
+                    let index = selection - calcCount
+                    guard command, histResults.indices.contains(index) else { return .ignored }
+                    core.copyHistoryExpression(histResults[index])
+                case .launcher:
+                    guard command, let app = selectedAppEntry, app.kind == .application,
+                        core.runningApps.isRunning(app)
+                    else { return .ignored }
+                    core.quit(app)
+                }
+                return .handled
+            }
+            .onKeyPress(.escape) {
+                if showActions || showAppMenu {
+                    closeMenus()
+                    return .handled
+                }
+                core.hidePalette()
+                return .handled
+            }
+            .onKeyPress(.tab) {
+                if menuOpen { return .handled }
+                toggleMode()
+                return .handled
+            }
+            .onKeyPress(keys: [","], phases: .down) { press in
+                guard press.modifiers.contains(.command) else { return .ignored }
+                core.showSettings()
+                return .handled
+            }
+            .onKeyPress(keys: ["k"], phases: .down) { press in
+                guard press.modifiers.contains(.command) else { return .ignored }
+                guard !isCollapsed else { return .handled }
+                guard resultCount > 0 else { return .handled }
+                if calcCount > 0, selection == 0, calcResult?.isActionable != true { return .handled }
+                toggleActions()
+                return .handled
+            }
+            .onKeyPress(keys: [.delete, .deleteForward], phases: .down) { press in
+                if menuOpen { return .handled }
+                guard press.modifiers.contains(.command) else { return .ignored }
+                switch vm.mode {
+                case .clipboard:
+                    deleteSelectedClip()
+                case .calculatorHistory:
+                    deleteSelectedHistoryEntry()
+                case .launcher, .emoji:
+                    return .ignored
+                }
+                return .handled
+            }
+            .onKeyPress(keys: ["p"], phases: .down) { press in
+                guard press.modifiers.contains(.command), vm.mode == .clipboard,
+                    clipResults.indices.contains(selection)
+                else { return .ignored }
+                core.togglePinnedClip(clipResults[selection])
+                return .handled
+            }
+    }
+
+    @ViewBuilder
+    private var styledContent: some View {
         let apps = vm.mode == .launcher ? appResults : []
         let clips = vm.mode == .clipboard ? clipResults : []
         let hist = vm.mode == .calculatorHistory ? histResults : []
         let emojiSections = vm.mode == .emoji ? emojiSections : []
         let emojis = emojiSections.flatMap(\.entries)
-        // Newest stored clip + the reorder token: the pair changes only when the store mutates, never when a query filters the list.
-        let clipFollow = ClipFollowKey(id: store.items.first?.id, token: vm.followToken)
-        // Every count/selection below derives from this one calc/offset pair — the flat selection index must always match the visible row order, calc card included.
         let calc = calcResult
         let offset = calc == nil ? 0 : 1
-        // Only the active mode is non-empty.
         let count = apps.count + offset + clips.count + hist.count + emojis.count
         let sel = count == 0 ? 0 : min(max(vm.selection, 0), count - 1)
         let calcSelected = calc != nil && sel == 0
-        // An error card is selectable but has no action: it must not drive the Copy Answer pill, ⌘K menu, or Enter.
         let calcActionable = calcSelected && calc?.isActionable == true
         let showSections = vm.mode == .launcher && isQueryEmpty
         let favoriteCount =
             showSections ? apps.prefix(while: { favorites.isFavorite($0) }).count : 0
         let selectedApp = apps.indices.contains(sel - offset) ? apps[sel - offset] : nil
-        // Derive the footer label from the already-resolved selection so `bottomBar` doesn't re-run `appResults` (its filter/sort aren't memoized). The primary/Actions group is hidden when there's nothing to act on: no results in any mode, or an error calc card (selectable but action-less).
         let pillLabel = actionPillLabel(selectedApp: selectedApp, calcActionable: calcActionable)
         let showActionGroup = count > 0 && !(calcSelected && !calcActionable)
 
-        // The `header` (and its single search field) is always attached in the same position via safeAreaInset so its focus survives the compact↔expanded swap — only the results below it toggle. Collapsed shows the bar alone; expanded floats header + action bar over the list with edge-dissolve (see docs/ui.md).
-        return Group {
-            if isCollapsed {
-                Color.clear
-            } else {
+        VStack(spacing: 0) {
+            header
+            if !isCollapsed {
                 content(
                     apps: apps, clips: clips, hist: hist, emojiSections: emojiSections, calc: calc,
                     selection: sel, favoriteCount: favoriteCount, showSections: showSections
                 )
+                .clipped()
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { header }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .overlay(alignment: .bottom) {
             if !isCollapsed {
                 bottomBar(pillLabel: pillLabel, showActionGroup: showActionGroup)
             }
         }
-        // Menus are in-window overlays anchored to a bottom corner, so they stay clipped inside the panel — never a system popover spilling outside the window.
-        .overlay {
-            if showAppMenu || showActions {
-                Color.black.opacity(0.001)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: closeMenus)
-            }
-        }
-        .overlay(alignment: .bottomLeading) {
-            if showAppMenu {
-                let content = appMenuContent
-                PopoverMenu(
-                    header: content.header, items: content.items, selection: $menuSelection,
-                    onActivate: activateMenuItem
-                )
-                .padding(Self.menuInset)
-                .transition(Self.menuTransition(.bottomLeading))
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if showActions, let content = actionsContent {
-                PopoverMenu(
-                    header: content.header, items: content.items, selection: $menuSelection,
-                    onActivate: activateMenuItem
-                )
-                .padding(Self.menuInset)
-                .transition(Self.menuTransition(.bottomTrailing))
-            }
-        }
-        // The window's own frame (driven by `PaletteWindowController`) is the size source of truth; filling it keeps the glass background and corner clip matched to the current compact/expanded window height.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .overlay { menuBackdropOverlay }
+        .overlay(alignment: .bottomLeading) { appMenuOverlay }
+        .overlay(alignment: .bottomTrailing) { actionsMenuOverlay }
         .background(Color.black.opacity(Theme.Colors.panelDimming))
         .background(VisualEffectView())
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous)
+                .strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1)
+        )
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous))
-        // Every show bumps focusToken — refocus search and drop any menu left open from last time (e.g. dismissed by clicking away with a context menu up).
-        .onChange(of: vm.focusToken) {
-            searchFocused = true
-            showActions = false
-            showAppMenu = false
-        }
-        .onChange(of: vm.query) {
-            vm.selection = 0
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
-        }
-        .onChange(of: vm.mode) {
-            vm.selection = 0
-            showActions = false
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
-        }
-        // Pop-to-root: `prepare` clears query/selection, but if both were already at their defaults the handlers above never fire — this token guarantees the scroll itself snaps back to the top.
-        .onChange(of: vm.resetToken) {
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
-        }
-        // Opening either menu highlights its first row and closes the other, so exactly one menu is ever open and always has a highlight.
-        .onChange(of: showActions) {
-            if showActions {
-                showAppMenu = false
-                menuSelection = 0
+        .keyframeAnimator(initialValue: (scale: 1.0, glowOpacity: 0.0), trigger: modeSwitchTrigger) { content, value in
+            content
+                .scaleEffect(value.scale)
+                .shadow(color: Color.white.opacity(value.glowOpacity), radius: value.glowOpacity > 0 ? 20 : 0)
+        } keyframes: { _ in
+            KeyframeTrack(\.scale) {
+                SpringKeyframe(1.018, duration: 0.16, spring: .bouncy)
+                SpringKeyframe(1.0, duration: 0.20, spring: .snappy)
             }
-            vm.menuOpen = menuOpen
-        }
-        .onChange(of: showAppMenu) {
-            if showAppMenu {
-                showActions = false
-                menuSelection = 0
+            KeyframeTrack(\.glowOpacity) {
+                LinearKeyframe(0.10, duration: 0.14)
+                LinearKeyframe(0.0, duration: 0.22)
             }
-            vm.menuOpen = menuOpen
         }
-        // Follow a row the store moved: a fresh capture (or promote-on-paste) lands at the head of its section, and pinning lifts a row into the Pinned section. With a query typed the highlight stays put; `AppCore` has already placed it for pin/paste.
-        .onChange(of: clipFollow) { old, new in
-            // A nil `old.id` is the first load landing, not a row that moved.
-            guard vm.mode == .clipboard, old.id != nil else { return }
-            if isQueryEmpty, old.id != new.id, let id = new.id,
-                let index = clips.firstIndex(where: { $0.id == id })
-            {
-                vm.selection = index
-            }
-            scrollToken = UUID()
+        .shadow(color: Color.black.opacity(0.55), radius: 24, x: 0, y: 0)
+        .padding(46)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private var menuBackdropOverlay: some View {
+        if showAppMenu || showActions {
+            Color.black.opacity(0.001)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: closeMenus)
         }
-        .onAppear { searchFocused = true }
-        // Typing/clearing/overflow/settings all flip `paletteIsCollapsed`; resize the window to match.
-        .onChange(of: core.paletteIsCollapsed) { core.syncPaletteSize() }
-        // ⌘1–⌘5 launch the compact bar's favorite slots (or expand, for the "…" overflow slot).
-        .onKeyPress(keys: ["1", "2", "3", "4", "5"], phases: .down) { press in
-            guard isCollapsed, settings.showFavoritesInCompactMode,
-                press.modifiers.contains(.command),
-                let digit = press.key.character.wholeNumberValue
-            else { return .ignored }
-            let slots = compactFavoriteSlots
-            let index = digit - 1
-            guard slots.indices.contains(index) else { return .ignored }
-            switch slots[index] {
-            case .app(let app): core.launch(app)
-            case .more: core.expandFromCompact()
-            }
-            return .handled
+    }
+
+    @ViewBuilder
+    private var appMenuOverlay: some View {
+        if showAppMenu {
+            let content = appMenuContent
+            PopoverMenu(
+                header: content.header, items: content.items, selection: $menuSelection,
+                onActivate: activateMenuItem
+            )
+            .padding(Self.menuInset)
+            .transition(Self.menuTransition(.bottomLeading))
         }
-        .onKeyPress(.downArrow) {
-            if isCollapsed {
-                // The compact bar has no visible selection; Down reveals the list at its first row
-                // while the shared search field stays mounted and focused.
-                vm.selection = 0
-                core.expandFromCompact()
-                return .handled
-            }
-            if menuOpen {
-                moveMenu(1)
-                return .handled
-            }
-            if vm.mode == .emoji { moveEmojiRow(1) } else { move(1) }
-            return .handled
-        }
-        .onKeyPress(.upArrow) {
-            if isCollapsed { return .ignored }
-            if menuOpen {
-                moveMenu(-1)
-                return .handled
-            }
-            if vm.mode == .emoji { moveEmojiRow(-1) } else { move(-1) }
-            return .handled
-        }
-        // Horizontal arrows step the emoji grid; everywhere else they stay with the field editor's caret. An open menu swallows them so the list behind never moves.
-        .onKeyPress(.leftArrow) {
-            if menuOpen { return .handled }
-            guard vm.mode == .emoji else { return .ignored }
-            move(-1)
-            return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            if menuOpen { return .handled }
-            guard vm.mode == .emoji else { return .ignored }
-            move(1)
-            return .handled
-        }
-        // With a menu open, plain ↵ activates its highlighted row. A modified ↵ always runs the selection's own action regardless of menu state: ⌘↵ the secondary copy action (each menu advertises it), ⌥↵ paste-in-place; plain ↵ (no menu) falls through to the field's onSubmit.
-        .onKeyPress(keys: [.return], phases: .down) { press in
-            let command = press.modifiers.contains(.command)
-            let option = press.modifiers.contains(.option)
-            if menuOpen, !command, !option {
-                activateMenuItem(menuSelection)
-                return .handled
-            }
-            guard command || option else { return .ignored }
-            switch vm.mode {
-            case .emoji:
-                guard emojiResults.indices.contains(selection) else { return .ignored }
-                if command {
-                    core.copyEmoji(emojiResults[selection])
-                } else {
-                    core.pasteEmojiKeepingWindowOpen(emojiResults[selection])
-                }
-            case .clipboard:
-                guard command, clipResults.indices.contains(selection) else { return .ignored }
-                core.copyToClipboard(clipResults[selection])
-            case .calculatorHistory:
-                // The inline calc card (index 0 when present) has no secondary action; only stored entries respond.
-                let index = selection - calcCount
-                guard command, histResults.indices.contains(index) else { return .ignored }
-                core.copyHistoryExpression(histResults[index])
-            case .launcher:
-                // ⌘↵ quits the selected app when it's running (the Actions menu advertises it); nothing else in the launcher takes a modified ↵. The condition mirrors the menu row's exactly, so the key never swallows a press it won't act on.
-                guard command, let app = selectedAppEntry, app.kind == .application,
-                    core.runningApps.isRunning(app)
-                else { return .ignored }
-                core.quit(app)
-            }
-            return .handled
-        }
-        .onKeyPress(.escape) {
-            if showActions || showAppMenu {
-                closeMenus()
-                return .handled
-            }
-            core.hidePalette()
-            return .handled
-        }
-        .onKeyPress(.tab) {
-            if menuOpen { return .handled }
-            toggleMode()
-            return .handled
-        }
-        .onKeyPress(keys: [","], phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            core.showSettings()
-            return .handled
-        }
-        // ⌘K toggles the actions panel for the current selection.
-        .onKeyPress(keys: ["k"], phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            // The Actions menu has no anchor in the compact bar (no bottom bar); swallow ⌘K there.
-            guard !isCollapsed else { return .handled }
-            guard resultCount > 0 else { return .handled }
-            // An error calc card is the selection but has no actions — don't open an empty panel.
-            if calcCount > 0, selection == 0, calcResult?.isActionable != true { return .handled }
-            toggleActions()
-            return .handled
-        }
-        // Bare backspace (back out of a sub-screen when the search is empty) is intercepted by PalettePanel.sendEvent — the field editor consumes it before onKeyPress could fire.
-        .onKeyPress(keys: [.delete, .deleteForward], phases: .down) { press in
-            if menuOpen { return .handled }
-            guard press.modifiers.contains(.command) else { return .ignored }
-            switch vm.mode {
-            case .clipboard:
-                deleteSelectedClip()
-            case .calculatorHistory:
-                deleteSelectedHistoryEntry()
-            case .launcher, .emoji:
-                return .ignored
-            }
-            return .handled
-        }
-        // ⌘P pins/unpins the selected clip — mirrors the Actions menu row, and works while that menu is open like the other advertised chords.
-        .onKeyPress(keys: ["p"], phases: .down) { press in
-            guard press.modifiers.contains(.command), vm.mode == .clipboard,
-                clipResults.indices.contains(selection)
-            else { return .ignored }
-            core.togglePinnedClip(clipResults[selection])
-            return .handled
+    }
+
+    @ViewBuilder
+    private var actionsMenuOverlay: some View {
+        if showActions, let content = actionsContent {
+            PopoverMenu(
+                header: content.header, items: content.items, selection: $menuSelection,
+                onActivate: activateMenuItem
+            )
+            .padding(Self.menuInset)
+            .transition(Self.menuTransition(.bottomTrailing))
         }
     }
 
@@ -447,11 +469,18 @@ struct RootPaletteView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Image(systemName: vm.mode.systemImage)
-                    .font(Theme.Typography.headerIcon)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-                    .frame(width: Theme.Size.headerIconSlot)
+                if NSImage(named: vm.mode.systemImage) != nil {
+                    Image(vm.mode.systemImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: Theme.Size.headerIconSlot, height: Theme.Size.headerIconSlot)
+                } else {
+                    Image(systemName: vm.mode.systemImage)
+                        .font(Theme.Typography.headerIcon)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
+                        .frame(width: Theme.Size.headerIconSlot)
+                }
             }
             searchField
             // Compact bar pins favorites to the right of the field; expanded shows them as list rows instead.
@@ -470,7 +499,7 @@ struct RootPaletteView: View {
         .padding(.horizontal, Theme.Spacing.md * 2)
         // Fixed row height + top padding, identical in both states, so typing (which flips compact→expanded) can't move the search bar. Compact centers the row in symmetric slack; expanded floats the same row over the list.
         .frame(height: Theme.Size.headerHeight)
-        .padding(.top, Theme.Size.headerPadding)
+        .padding(.vertical, Theme.Size.headerPadding)
         .frame(maxWidth: .infinity)
     }
 
@@ -645,7 +674,10 @@ struct RootPaletteView: View {
             }
         }
         .padding(Theme.Spacing.xs)
-        .frosted(in: Capsule())
+        .background(Color.black.opacity(Theme.Colors.panelDimming))
+        .background(VisualEffectView())
+        .overlay(Capsule().strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1))
+        .clipShape(Capsule())
     }
 
     /// Pill label for the current selection, derived from the selection already resolved in `body` so it never re-runs the (unmemoized) `appResults` filter/sort.
@@ -690,6 +722,8 @@ struct RootPaletteView: View {
             showAppMenu = false
         }
     }
+
+
 
     /// Inset of the menu panels from the window's bottom corners, kept just inside the rounded corner so the menu's own corner isn't clipped.
     private static let menuInset: CGFloat = 8
@@ -741,9 +775,12 @@ struct RootPaletteView: View {
         emojiScroll = EmojiScrollIntent(kind: .follow)
     }
 
-    /// Tab flips launcher↔clipboard; Calculator History (entered via its command) exits back to the launcher rather than joining the cycle.
+    /// Tab flips launcher↔clipboard; Calculator History (entered via its command) exits back to the launcher rather than joining the cycle. Deferred to next tick so the onKeyPress handler returns before triggering a re-render.
     private func toggleMode() {
-        vm.mode = vm.mode == .launcher ? .clipboard : .launcher
+        let target: PaletteMode = vm.mode == .launcher ? .clipboard : .launcher
+        DispatchQueue.main.async {
+            vm.mode = target
+        }
     }
 
     /// Back out to a fresh root search — `prepare` is the same reset used when the palette is shown (clears query/selection, bumps focusToken to refocus the field).
@@ -807,7 +844,10 @@ private struct MenuCircleButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .frosted(in: Circle())
+        .background(Color.black.opacity(Theme.Colors.panelDimming))
+        .background(VisualEffectView())
+        .overlay(Circle().strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1))
+        .clipShape(Circle())
     }
 }
 

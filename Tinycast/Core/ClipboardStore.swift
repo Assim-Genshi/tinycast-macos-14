@@ -130,15 +130,15 @@ final class ClipboardStore: ObservableObject {
 
     private let imagesDir: URL
     private let dbURL: URL
-    private var db: OpaquePointer?
-    private var insertStmt: OpaquePointer?
-    private var loadStmt: OpaquePointer?
-    private var windowFloorStmt: OpaquePointer?
-    private var searchStmt: OpaquePointer?
-    private var deleteByIDStmt: OpaquePointer?
-    private var pinStmt: OpaquePointer?
-    private var staleImagesStmt: OpaquePointer?
-    private var deleteStaleStmt: OpaquePointer?
+    nonisolated(unsafe) private var db: OpaquePointer?
+    nonisolated(unsafe) private var insertStmt: OpaquePointer?
+    nonisolated(unsafe) private var loadStmt: OpaquePointer?
+    nonisolated(unsafe) private var windowFloorStmt: OpaquePointer?
+    nonisolated(unsafe) private var searchStmt: OpaquePointer?
+    nonisolated(unsafe) private var deleteByIDStmt: OpaquePointer?
+    nonisolated(unsafe) private var pinStmt: OpaquePointer?
+    nonisolated(unsafe) private var staleImagesStmt: OpaquePointer?
+    nonisolated(unsafe) private var deleteStaleStmt: OpaquePointer?
 
     /// `directory` defaults to the per-channel cache; `Tools/clipboard-test.swift` passes a throwaway one so a harness run can never reach a real history.
     init(directory: URL? = nil) {
@@ -164,8 +164,7 @@ final class ClipboardStore: ObservableObject {
             .appendingPathComponent(bundleID, isDirectory: true)
     }
 
-    // Isolated so teardown may touch the main-actor statement/db pointers; AppCore only ever releases the store on the main actor, so no hop.
-    isolated deinit {
+    deinit {
         closeDatabase()
     }
 
@@ -544,7 +543,7 @@ final class ClipboardStore: ObservableObject {
         return false
     }
 
-    private func closeDatabase() {
+    nonisolated private func closeDatabase() {
         [
             insertStmt, loadStmt, windowFloorStmt, searchStmt, deleteByIDStmt, pinStmt,
             staleImagesStmt, deleteStaleStmt,

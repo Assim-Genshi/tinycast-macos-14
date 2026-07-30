@@ -25,7 +25,7 @@ enum EmojiGrid {
             start += entries.count
         }
         if query.trimmingCharacters(in: .whitespaces).isEmpty {
-            append("Frequently Used", frequent.top().compactMap(index.entry(for:)))
+            append("Frequently Used", frequent.top().compactMap { index.entry(for: $0) })
             for section in index.categorySections {
                 append(section.category.title, section.entries)
             }
@@ -134,7 +134,7 @@ struct EmojiGridView: View {
                 }
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.top, Theme.Spacing.xs)
-                .padding(.bottom, Theme.Spacing.md)
+                .padding(.bottom, Theme.Size.bottomBarHeight + Theme.Spacing.xs)
                 .hideNativeScrollers()
             }
             .edgeDissolve()

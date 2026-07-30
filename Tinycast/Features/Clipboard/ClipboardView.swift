@@ -26,8 +26,9 @@ struct ClipboardList: View {
     private var rows: [Row] {
         var rows: [Row] = []
         var currentTitle: String?
+        let boundaries = DateBoundaries()
         for item in results {
-            let title = item.isPinned ? "Pinned" : DateBucket(for: item.createdAt).title
+            let title = item.isPinned ? "Pinned" : boundaries.bucket(for: item.createdAt).title
             if title != currentTitle {
                 rows.append(.header(title))
                 currentTitle = title
@@ -39,13 +40,14 @@ struct ClipboardList: View {
 
     var body: some View {
         let rows = rows
+        let firstRowID = rows.first?.id
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
                         switch row {
                         case .header(let title):
-                            SectionHeader(title: title, isFirst: row.id == rows.first?.id)
+                            SectionHeader(title: title, isFirst: row.id == firstRowID)
                         case .item(let item):
                             ClipboardRow(
                                 item: item, selected: item.id == selectedID,
@@ -66,7 +68,7 @@ struct ClipboardList: View {
                 }
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.top, Theme.Spacing.xs)
-                .padding(.bottom, Theme.Spacing.md)
+                .padding(.bottom, Theme.Size.bottomBarHeight + Theme.Spacing.xs)
                 .hideNativeScrollers()
             }
             .edgeDissolve()
@@ -75,6 +77,30 @@ struct ClipboardList: View {
                 if let selectedID { proxy.scrollTo(selectedID.uuidString, anchor: .center) }
             }
         }
+    }
+}
+
+/// Fast date bucket classifier for history lists; computes boundary timestamps once per list render instead of performing thousands of Calendar.current operations inside row loops.
+struct DateBoundaries {
+    let startOfToday: Date
+    let startOfYesterday: Date
+    let startOfWeek: Date
+    let startOfMonth: Date
+
+    init(now: Date = Date(), calendar: Calendar = .current) {
+        let today = calendar.startOfDay(for: now)
+        startOfToday = today
+        startOfYesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) ?? today
+        startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) ?? today
+    }
+
+    func bucket(for date: Date) -> DateBucket {
+        if date >= startOfToday { return .today }
+        if date >= startOfYesterday { return .yesterday }
+        if date >= startOfWeek { return .thisWeek }
+        if date >= startOfMonth { return .thisMonth }
+        return .earlier
     }
 }
 
@@ -89,20 +115,6 @@ enum DateBucket: Int {
         case .thisWeek: return "This Week"
         case .thisMonth: return "This Month"
         case .earlier: return "Earlier"
-        }
-    }
-
-    init(for date: Date, now: Date = Date(), calendar: Calendar = .current) {
-        if calendar.isDateInToday(date) {
-            self = .today
-        } else if calendar.isDateInYesterday(date) {
-            self = .yesterday
-        } else if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
-            self = .thisWeek
-        } else if calendar.isDate(date, equalTo: now, toGranularity: .month) {
-            self = .thisMonth
-        } else {
-            self = .earlier
         }
     }
 }

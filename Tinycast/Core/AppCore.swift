@@ -18,7 +18,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
     }
     var systemImage: String {
         switch self {
-        case .launcher: return "magnifyingglass"
+        case .launcher: return "rawLogo"
         case .clipboard: return "doc.on.doc"
         case .calculatorHistory: return "plus.forwardslash.minus"
         case .emoji: return "face.smiling"

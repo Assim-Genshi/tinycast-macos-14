@@ -69,14 +69,14 @@ enum IconCache {
     private struct Decoded: @unchecked Sendable { let image: NSImage? }
 
     /// Return the decode directly (not a cache re-read) so an `NSCache` purge mid-decode can't strand a row on its placeholder. A missing path returns nil — not `NSWorkspace`'s broken-document icon — and never caches, so an uninstalled app can't leave a broken icon behind.
-    static func loadAsync(forFile path: String) async -> NSImage? {
+    @MainActor static func loadAsync(forFile path: String) async -> NSImage? {
         if let cached = cached(forFile: path) { return cached }
         return await Task.detached(priority: .userInitiated) { () -> Decoded in
             guard FileManager.default.fileExists(atPath: path) else { return Decoded(image: nil) }
             return Decoded(image: icon(forFile: path))
         }.value.image
     }
-    static func loadSymbolAsync(named name: String) async -> NSImage? {
+    @MainActor static func loadSymbolAsync(named name: String) async -> NSImage? {
         if let cached = cachedSymbol(named: name) { return cached }
         return await Task.detached(priority: .userInitiated) {
             Decoded(image: symbolIcon(named: name))
@@ -226,7 +226,7 @@ final class AppIndex: ObservableObject {
         return apps + SettingsPaneScanner.scan() + CommandRegistry.all
     }
 
-    /// Ranked matches. Empty query returns the full alphabetical list.
+    /// Ranked matches. Empty query returns the full alphabetical list. A leading `/` scopes results to commands only.
     func matches(_ query: String, limit: Int = 200) -> [AppEntry] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return apps }
@@ -235,14 +235,22 @@ final class AppIndex: ObservableObject {
         {
             return matchCache.result
         }
-        let result = rank(q, limit: limit)
+        let result: [AppEntry]
+        if q.hasPrefix("/") {
+            let subQuery = String(q.dropFirst().trimmingCharacters(in: .whitespaces))
+            let commands = apps.filter { $0.kind == .command }
+            result = subQuery.isEmpty ? commands : rank(subQuery, candidates: commands, limit: limit)
+        } else {
+            result = rank(q, limit: limit)
+        }
         matchCache = (q, ranking.revision, result)
         return result
     }
 
-    private func rank(_ q: String, limit: Int) -> [AppEntry] {
+    private func rank(_ q: String, candidates: [AppEntry]? = nil, limit: Int) -> [AppEntry] {
+        let pool = candidates ?? apps
         let learned = ranking.boosts(query: q)
-        let scored = apps.compactMap { app -> (AppEntry, Int)? in
+        let scored = pool.compactMap { app -> (AppEntry, Int)? in
             guard let score = FuzzyMatch.score(query: q, candidate: app.name) else { return nil }
             return (app, score + (learned[app.preferenceKey] ?? 0))
         }

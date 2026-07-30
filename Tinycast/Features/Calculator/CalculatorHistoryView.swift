@@ -35,8 +35,9 @@ struct CalculatorHistoryList: View {
         var rows: [Row] = []
         if let calc { rows = [.header("Calculator"), .calc(calc)] }
         var currentBucket: DateBucket?
+        let boundaries = DateBoundaries()
         for entry in results {
-            let bucket = DateBucket(for: entry.createdAt)
+            let bucket = boundaries.bucket(for: entry.createdAt)
             if bucket != currentBucket {
                 rows.append(.header(bucket.title))
                 currentBucket = bucket
@@ -48,13 +49,14 @@ struct CalculatorHistoryList: View {
 
     var body: some View {
         let rows = rows
+        let firstRowID = rows.first?.id
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
                         switch row {
                         case .header(let title):
-                            SectionHeader(title: title, isFirst: row.id == rows.first?.id)
+                            SectionHeader(title: title, isFirst: row.id == firstRowID)
                         case .calc(let result):
                             CalculatorCard(result: result, selected: calcSelected)
                                 .contentShape(Rectangle())
@@ -77,7 +79,7 @@ struct CalculatorHistoryList: View {
                 }
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.top, Theme.Spacing.xs)
-                .padding(.bottom, Theme.Spacing.md)
+                .padding(.bottom, Theme.Size.bottomBarHeight + Theme.Spacing.xs)
                 .hideNativeScrollers()
             }
             .edgeDissolve()
