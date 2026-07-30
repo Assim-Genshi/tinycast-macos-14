@@ -3,8 +3,11 @@ import Carbon.HIToolbox
 import Combine
 @preconcurrency import IOKit.hidsystem
 
-// Snapshot the imported mutable C global `mach_task_self_` (process-constant) so actor code never touches the raw global under strict concurrency.
-private let machTaskSelf = mach_task_self_
+// Bind to the underlying `mach_task_self` C symbol so actor code never touches the raw C `var` under strict concurrency.
+@_silgen_name("mach_task_self")
+private func machTaskSelfPort() -> mach_port_t
+
+private let machTaskSelf = machTaskSelfPort()
 
 /// C entry point for the event tap (always on the main thread): decode the `CGEvent`, cross into the actor via `assumeIsolated` for a Sendable `Decision`, then apply it out here (`Unmanaged<CGEvent>` isn't Sendable).
 private func hyperKeyEventTapCallback(
@@ -133,8 +136,8 @@ final class HyperKeyTap: ObservableObject {
     private let clock = ContinuousClock()
     private static let quickPressWindow: Duration = .milliseconds(250)
 
-    // Isolated so teardown can release the main-actor IOKit connection; the tap is an AppCore-owned singleton released on main. The kernel reclaims this at process exit anyway, so this only matters if it's ever recreated.
-    isolated deinit {
+    // Teardown releases the main-actor IOKit connection; the tap is an AppCore-owned singleton released on main. The kernel reclaims this at process exit anyway, so this only matters if it's ever recreated.
+    deinit {
         if hidConnect != IO_OBJECT_NULL { IOServiceClose(hidConnect) }
     }
 

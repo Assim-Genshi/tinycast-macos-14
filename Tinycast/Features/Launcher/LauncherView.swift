@@ -105,7 +105,7 @@ struct LauncherList: View {
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         .padding(.top, Theme.Spacing.xs)
-                        .padding(.bottom, Theme.Spacing.md)
+                        .padding(.bottom, Theme.Size.bottomBarHeight + Theme.Spacing.xs)
                         .hideNativeScrollers()
                         .scrollOriginAnchor()
                     }

@@ -17,7 +17,7 @@ final class ClipboardManager {
 
     private let store: ClipboardStore
     private let settings: AppSettings
-    private var timer: Timer?
+    nonisolated(unsafe) private var timer: Timer?
     private var lastChangeCount = 0
 
     init(store: ClipboardStore, settings: AppSettings) {
@@ -25,8 +25,7 @@ final class ClipboardManager {
         self.settings = settings
     }
 
-    // Isolated so teardown can touch the main-actor timer; AppCore only releases the manager on the main actor, so no hop. The poll block is `[weak self]`, so this isn't fixing a leak — it stops a stray timer firing if the manager is ever recreated.
-    isolated deinit {
+    deinit {
         timer?.invalidate()
     }
 

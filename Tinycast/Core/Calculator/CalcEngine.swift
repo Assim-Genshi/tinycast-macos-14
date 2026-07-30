@@ -43,7 +43,7 @@ enum CalcEngine {
         _ raw: String, now: Date, calendar: Calendar, currency: CurrencySource = .off
     ) -> CalcResult? {
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, query.count <= 256 else { return nil }
+        guard !query.isEmpty, !query.hasPrefix("/"), query.count <= 256 else { return nil }
 
         // Date/time first: `hrs till july` carries no digit, so it must run before the numeric reject below.
         if let dateTime = CalcDateTime.evaluate(query, now: now, calendar: calendar) { return dateTime }
