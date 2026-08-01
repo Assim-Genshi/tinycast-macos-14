@@ -71,6 +71,11 @@ enum CalcTokenizer {
             }
 
             if ch.isLetter || ch == "°" {
+                if (ch == "x" || ch == "X") && (i + 1 == chars.count || !chars[i + 1].isLetter) {
+                    tokens.append(.op("*"))
+                    i += 1
+                    continue
+                }
                 // Split an attached currency prefix (`USD1K`) before the generic ident scanner absorbs its digits.
                 if ch.isLetter {
                     var letterEnd = i

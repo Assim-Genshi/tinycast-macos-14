@@ -83,7 +83,7 @@ struct PopoverMenu: View {
         .background(VisualEffectView())
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Radius.menuPanel, style: .continuous)
-                .strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1)
+                .strokeBorder(Theme.Colors.borderFadeGradient, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.menuPanel, style: .continuous))
     }

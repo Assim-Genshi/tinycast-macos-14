@@ -91,6 +91,12 @@ enum Theme {
         static let controlSurface = Color.white.opacity(0.10)
         /// Control borders: outlined kbd chips.
         static let border = Color.white.opacity(0.20)
+        /// Vertical gradient for floating control borders: top 100%, middle 0%, bottom 100%.
+        static let borderFadeGradient = LinearGradient(
+            colors: [border.opacity(0.8), border.opacity(0.0), border.opacity(0.8)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
         static let textSecondary = Color.white.opacity(0.60)
         static let textTertiary = Color.white.opacity(0.40)
         /// Settings grouped "card": a faint raised surface whose hairline border doubles as the inset row divider.

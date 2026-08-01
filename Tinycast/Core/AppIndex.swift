@@ -104,7 +104,7 @@ enum IconCache {
             NSBezierPath(roundedRect: tile, xRadius: 9, yRadius: 9).fill()
 
             let config = NSImage.SymbolConfiguration(pointSize: 21, weight: .medium)
-                .applying(.init(paletteColors: [.white.withAlphaComponent(0.85)]))
+                .applying(.init(paletteColors: [.white.withAlphaComponent(0.95), .white.withAlphaComponent(0.85)]))
             guard
                 let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
                     .withSymbolConfiguration(config)

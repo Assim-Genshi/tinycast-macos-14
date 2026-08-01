@@ -1,5 +1,27 @@
 import SwiftUI
 
+private struct ModeSwitchKeyframe: Animatable {
+    var scale: Double = 1.0
+    var glowOpacity: Double = 0.0
+    var glowRadius: Double = 0.0
+    var hazeOpacity: Double = 0.0
+    var hazeRadius: Double = 0.0
+
+    typealias AP = AnimatablePair<Double, Double>
+    var animatableData: AnimatablePair<AP, AnimatablePair<AP, Double>> {
+        get {
+            .init(.init(scale, glowOpacity), .init(.init(glowRadius, hazeOpacity), hazeRadius))
+        }
+        set {
+            scale = newValue.first.first
+            glowOpacity = newValue.first.second
+            glowRadius = newValue.second.first.first
+            hazeOpacity = newValue.second.first.second
+            hazeRadius = newValue.second.second
+        }
+    }
+}
+
 struct RootPaletteView: View {
     @EnvironmentObject private var core: AppCore
     @EnvironmentObject private var vm: PaletteViewModel
@@ -402,21 +424,41 @@ struct RootPaletteView: View {
                 .strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous))
-        .keyframeAnimator(initialValue: (scale: 1.0, glowOpacity: 0.0), trigger: modeSwitchTrigger) { content, value in
+        .keyframeAnimator(initialValue: ModeSwitchKeyframe(), trigger: modeSwitchTrigger) { content, value in
             content
                 .scaleEffect(value.scale)
-                .shadow(color: Color.white.opacity(value.glowOpacity), radius: value.glowOpacity > 0 ? 20 : 0)
+                .shadow(color: Color("accent").opacity(value.glowOpacity), radius: value.glowRadius)
+                .shadow(color: Color("accent").opacity(value.hazeOpacity), radius: value.hazeRadius)
         } keyframes: { _ in
             KeyframeTrack(\.scale) {
                 SpringKeyframe(1.018, duration: 0.16, spring: .bouncy)
                 SpringKeyframe(1.0, duration: 0.20, spring: .snappy)
             }
             KeyframeTrack(\.glowOpacity) {
-                LinearKeyframe(0.10, duration: 0.14)
-                LinearKeyframe(0.0, duration: 0.22)
+                CubicKeyframe(0.40, duration: 0.08)
+                CubicKeyframe(0.15, duration: 0.20)
+                CubicKeyframe(0.0, duration: 0.22)
+            }
+            KeyframeTrack(\.glowRadius) {
+                CubicKeyframe(10, duration: 0.08)
+                CubicKeyframe(22, duration: 0.20)
+                CubicKeyframe(30, duration: 0.22)
+            }
+            KeyframeTrack(\.hazeOpacity) {
+                LinearKeyframe(0.0, duration: 0.06)
+                CubicKeyframe(0.18, duration: 0.16)
+                CubicKeyframe(0.07, duration: 0.26)
+                CubicKeyframe(0.0, duration: 0.35)
+            }
+            KeyframeTrack(\.hazeRadius) {
+                LinearKeyframe(15, duration: 0.06)
+                CubicKeyframe(38, duration: 0.16)
+                CubicKeyframe(60, duration: 0.26)
+                CubicKeyframe(75, duration: 0.35)
             }
         }
-        .shadow(color: Color.black.opacity(0.55), radius: 24, x: 0, y: 0)
+        .shadow(color: Color.black.opacity(0.45), radius: 8, x: 0, y: 4)
+        .shadow(color: Color.black.opacity(0.30), radius: 30, x: 0, y: 0)
         .padding(46)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -676,7 +718,7 @@ struct RootPaletteView: View {
         .padding(Theme.Spacing.xs)
         .background(Color.black.opacity(Theme.Colors.panelDimming))
         .background(VisualEffectView())
-        .overlay(Capsule().strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Theme.Colors.borderFadeGradient, lineWidth: 1))
         .clipShape(Capsule())
     }
 
@@ -846,7 +888,7 @@ private struct MenuCircleButton: View {
         .onHover { hovered = $0 }
         .background(Color.black.opacity(Theme.Colors.panelDimming))
         .background(VisualEffectView())
-        .overlay(Circle().strokeBorder(Theme.Colors.border.opacity(0.8), lineWidth: 1))
+        .overlay(Circle().strokeBorder(Theme.Colors.borderFadeGradient, lineWidth: 1))
         .clipShape(Circle())
     }
 }

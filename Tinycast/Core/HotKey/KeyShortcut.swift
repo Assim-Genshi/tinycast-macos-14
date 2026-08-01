@@ -25,6 +25,35 @@ struct KeyShortcut: Hashable, Sendable {
         Self.collapsedModifierSymbols(from: modifierFlags) + [keyGlyph]
     }
 
+    /// Single character string for NSMenuItem.keyEquivalent.
+    @MainActor var keyEquivalent: String {
+        switch carbonKeyCode {
+        case kVK_Space: return " "
+        case kVK_Return, kVK_ANSI_KeypadEnter: return "\r"
+        case kVK_Tab: return "\t"
+        case kVK_Delete: return "\u{0008}"
+        case kVK_ForwardDelete: return "\u{007F}"
+        case kVK_Escape: return "\u{001B}"
+        case kVK_UpArrow: return String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        case kVK_DownArrow: return String(UnicodeScalar(NSDownArrowFunctionKey)!)
+        case kVK_LeftArrow: return String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+        case kVK_RightArrow: return String(UnicodeScalar(NSRightArrowFunctionKey)!)
+        case kVK_F1: return String(UnicodeScalar(NSF1FunctionKey)!)
+        case kVK_F2: return String(UnicodeScalar(NSF2FunctionKey)!)
+        case kVK_F3: return String(UnicodeScalar(NSF3FunctionKey)!)
+        case kVK_F4: return String(UnicodeScalar(NSF4FunctionKey)!)
+        case kVK_F5: return String(UnicodeScalar(NSF5FunctionKey)!)
+        case kVK_F6: return String(UnicodeScalar(NSF6FunctionKey)!)
+        case kVK_F7: return String(UnicodeScalar(NSF7FunctionKey)!)
+        case kVK_F8: return String(UnicodeScalar(NSF8FunctionKey)!)
+        case kVK_F9: return String(UnicodeScalar(NSF9FunctionKey)!)
+        case kVK_F10: return String(UnicodeScalar(NSF10FunctionKey)!)
+        case kVK_F11: return String(UnicodeScalar(NSF11FunctionKey)!)
+        case kVK_F12: return String(UnicodeScalar(NSF12FunctionKey)!)
+        default: return Self.layoutCharacter(for: carbonKeyCode)?.lowercased() ?? ""
+        }
+    }
+
     var modifierFlags: NSEvent.ModifierFlags {
         var flags: NSEvent.ModifierFlags = []
         if carbonModifiers & controlKey != 0 { flags.insert(.control) }

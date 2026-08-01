@@ -23,6 +23,11 @@ struct CalcTests {
         expectDisplay("10/4", "2.5")
         expectDisplay("1/3", "0.3333333333")
         expectDisplay("2.5 * 4", "10")
+        expectDisplay("5x7", "35")  // 'x' as multiplication symbol
+        expectDisplay("5X7", "35")  // uppercase 'X'
+        expectDisplay("2.5 x 4", "10")
+        expectDisplay("(5+2)x3", "21")
+        expectDisplay("10kg x 2", "20 kg")
         expectDisplay("1,000 + 234", "1,234")  // grouping commas accepted in input
 
         // Compact thousands suffix — attached `k` is a number suffix; spaced `k` remains Kelvin

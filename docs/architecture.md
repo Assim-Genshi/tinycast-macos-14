@@ -16,7 +16,7 @@ launch actions are methods on `AppCore` that the SwiftUI views call.
 
 ## Entry points and windows
 
-`TinycastApp` (`@main`) declares only a `MenuBarExtra` scene; everything else visible is driven
+`AppDelegate` manages the menu bar status item (`NSStatusItem`); everything else visible is driven
 imperatively from AppKit.
 
 - **Command palette** — a borderless floating `NSPanel` (`Core/PalettePanel.swift`) hosting SwiftUI
