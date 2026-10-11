@@ -35,8 +35,8 @@ enum Theme {
     }
 
     enum Size {
-        static let panelWidth: CGFloat = 750
-        static let panelHeight: CGFloat = 475
+        static let panelWidth: CGFloat = 800
+        static let panelHeight: CGFloat = 525
         /// Fraction of the active screen's visible height between the top of the visible area and the palette's top edge; the window grows downward from this edge (Spotlight-style upper placement).
         static let paletteTopMarginFraction: CGFloat = 0.18
         static let headerHeight: CGFloat = 44

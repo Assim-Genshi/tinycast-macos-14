@@ -244,7 +244,6 @@ private struct SnippetEditorSheet: View {
     @State private var name: String
     @State private var keyword: String
     @State private var text: String
-    @State private var selection: TextSelection?
     @State private var isEnabled: Bool
     @State private var showsConfirmation: Bool
     @State private var errorMessage: String?
@@ -312,7 +311,7 @@ private struct SnippetEditorSheet: View {
                 Spacer()
                 placeholderMenu
             }
-            TextEditor(text: $text, selection: $selection)
+            TextEditor(text: $text)
                 .font(.body.monospaced())
                 .scrollContentBackground(.hidden)
                 .padding(Theme.Spacing.sm)
@@ -364,14 +363,7 @@ private struct SnippetEditorSheet: View {
 
     /// Replaces the selection, or lands at the caret; appends when there is no usable one (the menu can be used before the editor is ever focused).
     private func insert(_ token: String) {
-        if let selection, case .selection(let range) = selection.indices,
-            range.lowerBound >= text.startIndex, range.upperBound <= text.endIndex {
-            text.replaceSubrange(range, with: token)
-        } else {
-            text += token
-        }
-        // Those indices belong to the string we just replaced, so they must not survive into the next insert.
-        selection = nil
+        text += token
         isTemplateFocused = true
     }
 

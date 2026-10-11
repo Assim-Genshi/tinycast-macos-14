@@ -1,0 +1,59 @@
+name: Build FSearch Universal Binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: "Git repository URL for fsearch"
+        required: false
+        default: "https://github.com/noahdunnagan/fsearch.git"
+      branch:
+        description: "Branch or commit to build"
+        required: false
+        default: "main"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Universal macOS Binary
+    runs-on: macos-14
+    steps:
+      - name: Clone fsearch
+        run: |
+          git clone --depth 1 --branch "${{ inputs.branch }}" "${{ inputs.repo_url }}" fsearch-repo
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin, aarch64-apple-darwin
+
+      - name: Build for Intel (x86_64)
+        working-directory: fsearch-repo
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build for Apple Silicon (aarch64)
+        working-directory: fsearch-repo
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create Universal Binary
+        working-directory: fsearch-repo
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/x86_64-apple-darwin/release/fsearch \
+            target/aarch64-apple-darwin/release/fsearch \
+            -output dist/fsearch
+          strip dist/fsearch
+          chmod +x dist/fsearch
+          echo "Binary info:"
+          lipo -info dist/fsearch
+          cd dist && zip ../fsearch-macos-universal.zip fsearch
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fsearch-macos-universal
+          path: fsearch-repo/fsearch-macos-universal.zip
+          retention-days: 90

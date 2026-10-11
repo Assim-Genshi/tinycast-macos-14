@@ -99,6 +99,8 @@ swiftc -swift-version 6 Tinycast/Core/WindowManagement/WindowCommand.swift \
     Tinycast/Core/WindowManagement/WindowLayout.swift \
     Tinycast/Core/WindowManagement/WindowActionMemory.swift Tools/window-command-test.swift \
     -o /tmp/window-command-test && /tmp/window-command-test        # window geometry + action memory
+swiftc -swift-version 6 Tinycast/Core/FileSearchItem.swift Tinycast/Core/FSearchClient.swift \
+    Tools/file-search-test.swift -o /tmp/file-search-test && /tmp/file-search-test # file search engine
 ```
 
 `Tools/fuzz-test.swift` holds a **copy** of `FuzzyMatch` from `Tinycast/Core/AppIndex.swift` —

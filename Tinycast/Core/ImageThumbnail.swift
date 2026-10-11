@@ -45,7 +45,7 @@ enum ImageThumbnail {
     private struct Decoded: @unchecked Sendable { let image: NSImage? }
 
     /// Decodes off the main thread and returns the decode directly, not a cache re-read — a purge or eviction mid-decode must not strand a thumbnail on its placeholder.
-    static func loadAsync(_ url: URL, maxPixel: CGFloat) async -> NSImage? {
+    @MainActor static func loadAsync(_ url: URL, maxPixel: CGFloat) async -> NSImage? {
         if let cached = cached(url, maxPixel: maxPixel) { return cached }
         return await Task.detached(priority: .userInitiated) {
             Decoded(image: load(url, maxPixel: maxPixel))

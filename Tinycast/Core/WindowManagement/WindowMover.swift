@@ -192,7 +192,7 @@ final class WindowMover {
                 == .success,
             let windows = value as? [AXUIElement]
         else { return nil }
-        return windows.first(where: isEligible)
+        return windows.first(where: { isEligible($0) })
     }
 
     /// A real, restorable window — not a sheet, popover or minimized one, and one that reports geometry.

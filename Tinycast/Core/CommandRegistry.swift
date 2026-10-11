@@ -2,6 +2,7 @@ import Foundation
 
 /// Built-in launcher actions surfaced alongside user-authored commands, with dispatch in `AppCore.runCommand`.
 enum CommandID: String, CaseIterable, Sendable {
+    case searchFiles = "command:search-files"
     case calculatorHistory = "command:calculator-history"
     case clipboardHistory = "command:clipboard-history"
     case searchEmoji = "command:search-emoji"
@@ -14,6 +15,7 @@ enum CommandID: String, CaseIterable, Sendable {
 
     var name: String {
         switch self {
+        case .searchFiles: return "Search Files"
         case .calculatorHistory: return "Calculator History"
         case .clipboardHistory: return "Clipboard History"
         case .searchEmoji: return "Search Emoji & Symbols"
@@ -28,6 +30,7 @@ enum CommandID: String, CaseIterable, Sendable {
 
     var sfSymbol: String {
         switch self {
+        case .searchFiles: return "doc.text.magnifyingglass"
         case .calculatorHistory: return "plus.forwardslash.minus"
         case .clipboardHistory: return "doc.on.clipboard"
         case .searchEmoji: return "face.smiling"

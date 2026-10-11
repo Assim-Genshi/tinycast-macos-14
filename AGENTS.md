@@ -83,7 +83,8 @@ Never break these without an explicit task to do so.
   splits the same way for `Tools/window-command-test.swift`: `WindowCommand.swift`, `WindowLayout.swift`
   and `WindowActionMemory.swift` stay Foundation + CoreGraphics and pure (no AX, no `NSScreen`, no
   clock — `WindowActionMemory` takes `now` as a parameter), while every `AXUIElement` call and the
-  Cocoa↔AX coordinate flip live in `WindowMover.swift`.
+  Cocoa↔AX coordinate flip live in `WindowMover.swift`. `Core/FileSearchItem.swift` and
+  `Core/FSearchClient.swift` stay Foundation + Darwin only for `Tools/file-search-test.swift`.
 - **`WindowLayout` works exclusively in AX space** — global coordinates, top-left origin, +Y **down**.
   `WindowMover.AXGeometry` is the only place that converts, and it anchors the flip on the **primary**
   display's height, never the window's own screen: doing otherwise shears every rect on a

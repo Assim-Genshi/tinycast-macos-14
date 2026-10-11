@@ -20,8 +20,7 @@ final class SnippetsStore: ObservableObject {
     var onSnapshot: ((SnippetRepository.Snapshot) -> Void)?
 
     private let repository: SnippetRepository
-    private var directoryWatcher: DispatchSourceFileSystemObject?
-    private var fileWatchers: [String: DispatchSourceFileSystemObject] = [:]
+    private let watchers = WatcherContainer()
     private var reloadTask: Task<Void, Never>?
     private var watcherRetryTask: Task<Void, Never>?
     private var generation = 0
@@ -33,11 +32,10 @@ final class SnippetsStore: ObservableObject {
         snippetsDirectory = repository.snippetsDirectory
     }
 
-    isolated deinit {
+    deinit {
         reloadTask?.cancel()
         watcherRetryTask?.cancel()
-        directoryWatcher?.cancel()
-        for source in fileWatchers.values { source.cancel() }
+        watchers.stopWatchers()
     }
 
     func start() async {
@@ -183,7 +181,7 @@ final class SnippetsStore: ObservableObject {
 
     private func publishLocal(records: [StoredSnippet]) {
         apply(SnippetRepository.Snapshot(
-            records: records.sorted(by: recordOrder),
+            records: records.sorted(by: { recordOrder($0, $1) }),
             issues: issues))
     }
 
@@ -225,23 +223,23 @@ final class SnippetsStore: ObservableObject {
         watcherRetryTask = nil
 
         var changed = false
-        if directoryWatcher == nil {
+        if watchers.directoryWatcher == nil {
             changed = armDirectoryWatcher() || changed
         }
 
         let desiredPaths = Set(
             snapshot.records.map { $0.fileURL.standardizedFileURL.path }
                 + snapshot.issues.map { $0.fileURL.standardizedFileURL.path })
-        for path in Array(fileWatchers.keys) where !desiredPaths.contains(path) {
-            fileWatchers.removeValue(forKey: path)?.cancel()
+        for path in Array(watchers.fileWatchers.keys) where !desiredPaths.contains(path) {
+            watchers.fileWatchers.removeValue(forKey: path)?.cancel()
             changed = true
         }
-        for path in desiredPaths where fileWatchers[path] == nil {
+        for path in desiredPaths where watchers.fileWatchers[path] == nil {
             changed = armFileWatcher(path: path) || changed
         }
 
         // Retry whenever anything we wanted is still unwatched — a failed file watcher is as blinding as a missing directory watcher.
-        if directoryWatcher == nil || desiredPaths.contains(where: { fileWatchers[$0] == nil }) {
+        if watchers.directoryWatcher == nil || desiredPaths.contains(where: { watchers.fileWatchers[$0] == nil }) {
             scheduleWatcherRetry()
         }
         return changed
@@ -264,7 +262,7 @@ final class SnippetsStore: ObservableObject {
             }
         }
         source.setCancelHandler { Darwin.close(descriptor) }
-        directoryWatcher = source
+        watchers.directoryWatcher = source
         source.resume()
         return true
     }
@@ -285,14 +283,14 @@ final class SnippetsStore: ObservableObject {
             }
         }
         source.setCancelHandler { Darwin.close(descriptor) }
-        fileWatchers[path] = source
+        watchers.fileWatchers[path] = source
         source.resume()
         return true
     }
 
     private func handleDirectoryEvent(generation installedGeneration: Int) {
         guard isStarted, installedGeneration == watcherGeneration,
-            let events = directoryWatcher?.data
+            let events = watchers.directoryWatcher?.data
         else { return }
 
         if !events.isDisjoint(with: [.delete, .rename, .revoke]) {
@@ -303,11 +301,11 @@ final class SnippetsStore: ObservableObject {
 
     private func handleFileEvent(path: String, generation installedGeneration: Int) {
         guard isStarted, installedGeneration == watcherGeneration,
-            let source = fileWatchers[path]
+            let source = watchers.fileWatchers[path]
         else { return }
 
         if !source.data.isDisjoint(with: [.delete, .rename, .revoke]) {
-            fileWatchers.removeValue(forKey: path)?.cancel()
+            watchers.fileWatchers.removeValue(forKey: path)?.cancel()
         }
         noteFilesystemChange()
     }
@@ -319,10 +317,7 @@ final class SnippetsStore: ObservableObject {
 
     private func stopWatchers() {
         watcherGeneration &+= 1
-        directoryWatcher?.cancel()
-        directoryWatcher = nil
-        for source in fileWatchers.values { source.cancel() }
-        fileWatchers.removeAll()
+        watchers.stopWatchers()
     }
 
     private func scheduleWatcherRetry() {
@@ -343,5 +338,21 @@ final class SnippetsStore: ObservableObject {
         let comparison = lhs.snippet.name.localizedCaseInsensitiveCompare(rhs.snippet.name)
         if comparison != .orderedSame { return comparison == .orderedAscending }
         return lhs.id < rhs.id
+    }
+}
+
+private final class WatcherContainer: @unchecked Sendable {
+    var directoryWatcher: DispatchSourceFileSystemObject?
+    var fileWatchers: [String: DispatchSourceFileSystemObject] = [:]
+
+    func stopWatchers() {
+        directoryWatcher?.cancel()
+        directoryWatcher = nil
+        for source in fileWatchers.values { source.cancel() }
+        fileWatchers.removeAll()
+    }
+
+    deinit {
+        stopWatchers()
     }
 }

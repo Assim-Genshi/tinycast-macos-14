@@ -7,6 +7,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
     case clipboard
     case calculatorHistory
     case emoji
+    case files
 
     var id: String { rawValue }
     var title: String {
@@ -15,6 +16,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .calculatorHistory: return "Calculator History"
         case .emoji: return "Emoji & Symbols"
+        case .files: return "Files"
         }
     }
     var systemImage: String {
@@ -23,6 +25,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.doc"
         case .calculatorHistory: return "plus.forwardslash.minus"
         case .emoji: return "face.smiling"
+        case .files: return "doc.text.magnifyingglass"
         }
     }
     var placeholder: String {
@@ -31,6 +34,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Type to filter entries…"
         case .calculatorHistory: return "Do math, convert units, or search your past calculations…"
         case .emoji: return "Search emoji and symbols…"
+        case .files: return "Search files, paths, or grep content…"
         }
     }
 }
@@ -110,6 +114,7 @@ final class AppCore: ObservableObject {
     let emojiIndex = EmojiIndex()
     let frequentEmoji = FrequentEmojiStore()
     let runningApps = RunningAppsMonitor()
+    let fileSearch = FileSearchManager()
     let palette = PaletteViewModel()
 
     private lazy var windowController = PaletteWindowController(core: self)
@@ -154,6 +159,7 @@ final class AppCore: ObservableObject {
         Task { await appIndex.refresh() }
         Task { await emojiIndex.load() }
         currencyRates.start()
+        fileSearch.start()
 
         hotKeys.onTogglePalette = { [weak self] in self?.togglePalette() }
         hotKeys.onToggleClipboard = { [weak self] in self?.toggleClipboard() }
@@ -288,6 +294,14 @@ final class AppCore: ObservableObject {
         }
     }
 
+    func toggleFiles() {
+        if windowController.isVisible, palette.mode == .files {
+            hidePalette()
+        } else {
+            showPalette(mode: .files)
+        }
+    }
+
     /// Shows the palette, honoring Pop to Root Search: a reopen within the timeout restores the pre-close state — any mode for the generic summon (`restoreAnyMode`), else only when the preserved mode already matches the requested one.
     func showPalette(mode: PaletteMode, restoreAnyMode: Bool = false) {
         let preserved = windowController.consumePreservedState()
@@ -297,6 +311,10 @@ final class AppCore: ObservableObject {
         windowController.show()
         // Re-scan on open so an app uninstalled since the last scan drops out of the launcher.
         if palette.mode == .launcher { Task { await appIndex.refresh() } }
+        if palette.mode == .files {
+            Task { await fileSearch.checkConnection() }
+            fileSearch.search(query: palette.query)
+        }
     }
 
     func hidePalette(restoreFocus: Bool = true) {
@@ -675,6 +693,8 @@ final class AppCore: ObservableObject {
 
     private func runCommand(_ entry: AppEntry) {
         switch CommandRegistry.command(for: entry) {
+        case .searchFiles:
+            showPalette(mode: .files)
         case .calculatorHistory:
             showPalette(mode: .calculatorHistory)
         case .clipboardHistory:
@@ -785,6 +805,58 @@ final class AppCore: ObservableObject {
     func pasteEmojiKeepingWindowOpen(_ entry: EmojiEntry) {
         frequentEmoji.record(entry.glyph)
         windowController.pasteStringKeepingWindowOpen(entry.display(tone: settings.emojiSkinTone))
+    }
+
+    // MARK: - File search actions
+
+    func openFile(_ item: FileSearchItem) {
+        NSWorkspace.shared.open(item.url)
+        hidePalette()
+    }
+
+    func revealInFinder(_ item: FileSearchItem) {
+        NSWorkspace.shared.activateFileViewerSelecting([item.url])
+        hidePalette()
+    }
+
+    func copyFilePath(_ item: FileSearchItem) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(item.path, forType: .string)
+        hud.show(title: "Path Copied", kind: .info)
+        hidePalette()
+    }
+
+    func copyFile(_ item: FileSearchItem) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects([item.url as NSURL])
+        hud.show(title: "File Copied", kind: .info)
+        hidePalette()
+    }
+
+    func openInTerminal(_ item: FileSearchItem) {
+        let targetURL = item.isDirectory ? item.url : item.url.deletingLastPathComponent()
+        NSWorkspace.shared.open(
+            [targetURL],
+            withApplicationAt: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"),
+            configuration: NSWorkspace.OpenConfiguration()
+        )
+        hidePalette()
+    }
+
+    func trashFile(_ item: FileSearchItem) {
+        do {
+            try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+            hud.show(title: "Moved to Trash", kind: .info)
+            fileSearch.search(query: palette.query)
+        } catch {
+            showNotice(
+                title: "Could Not Trash Item",
+                message: error.localizedDescription,
+                kind: .error
+            )
+        }
     }
 
     // MARK: - Snippets

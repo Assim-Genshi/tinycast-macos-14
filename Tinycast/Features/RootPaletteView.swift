@@ -76,6 +76,7 @@ struct RootPaletteView: View {
     }
     /// Flat grid order across sections — what `vm.selection` indexes in emoji mode.
     private var emojiResults: [EmojiEntry] { emojiSections.flatMap(\.entries) }
+    private var fileResults: [FileSearchItem] { core.fileSearch.results }
 
     /// Inline calculator answer for the current query, live in both the launcher and Calculator History search; when present it occupies flat selection index 0 so rows shift by `calcCount`.
     private var calcResult: CalcResult? {
@@ -90,6 +91,7 @@ struct RootPaletteView: View {
         case .clipboard: return clipResults.count
         case .calculatorHistory: return histResults.count + calcCount
         case .emoji: return emojiResults.count
+        case .files: return fileResults.count
         }
     }
     /// Selection clamped into the current results — the single source of truth for highlight, preview and activation so the list and preview can never disagree.
@@ -123,6 +125,9 @@ struct RootPaletteView: View {
     }
     private var selectedEmojiEntry: EmojiEntry? {
         emojiResults.indices.contains(selection) ? emojiResults[selection] : nil
+    }
+    private var selectedFileItem: FileSearchItem? {
+        fileResults.indices.contains(selection) ? fileResults[selection] : nil
     }
 
     /// The bottom-right Actions menu content for the current mode's selection, or nil when the selection has no actions.
@@ -166,6 +171,11 @@ struct RootPaletteView: View {
                     entry: emoji, core: core, target: vm.pasteTarget)
             }
             return nil
+        case .files:
+            if let file = selectedFileItem {
+                return FileActionsMenu.content(item: file, core: core)
+            }
+            return nil
         }
     }
 
@@ -205,19 +215,22 @@ struct RootPaletteView: View {
             }
             .onChange(of: vm.query) {
                 Task { @MainActor in vm.selection = 0 }
-                scrollToken = UUID()
-                emojiScroll = EmojiScrollIntent(kind: .top)
+                scroll = ScrollIntent(kind: .top)
+                if vm.mode == .files {
+                    core.fileSearch.search(query: vm.query)
+                }
             }
             .onChange(of: vm.mode) {
                 Task { @MainActor in vm.selection = 0 }
                 showActions = false
-                scrollToken = UUID()
-                emojiScroll = EmojiScrollIntent(kind: .top)
+                scroll = ScrollIntent(kind: .top)
                 modeSwitchTrigger += 1
+                if vm.mode == .files {
+                    core.fileSearch.search(query: vm.query)
+                }
             }
             .onChange(of: vm.resetToken) {
-                scrollToken = UUID()
-                emojiScroll = EmojiScrollIntent(kind: .top)
+                scroll = ScrollIntent(kind: .top)
             }
             .onChange(of: showActions) {
                 if showActions {
@@ -241,7 +254,7 @@ struct RootPaletteView: View {
                         Task { @MainActor in vm.selection = index }
                     }
                 }
-                scrollToken = UUID()
+                scroll = ScrollIntent(kind: .follow)
             }
             .onAppear { searchFocused = true }
             .onChange(of: core.paletteIsCollapsed) { core.syncPaletteSize() }
@@ -326,6 +339,9 @@ struct RootPaletteView: View {
                         core.runningApps.isRunning(app)
                     else { return .ignored }
                     core.quit(app)
+                case .files:
+                    guard command, let file = selectedFileItem else { return .ignored }
+                    core.revealInFinder(file)
                 }
                 return .handled
             }
@@ -355,6 +371,17 @@ struct RootPaletteView: View {
                 toggleActions()
                 return .handled
             }
+            .onKeyPress(keys: ["c"], phases: .down) { press in
+                guard press.modifiers.contains(.command), vm.mode == .files,
+                    let file = selectedFileItem
+                else { return .ignored }
+                if press.modifiers.contains(.shift) {
+                    core.copyFile(file)
+                } else {
+                    core.copyFilePath(file)
+                }
+                return .handled
+            }
             .onKeyPress(keys: [.delete, .deleteForward], phases: .down) { press in
                 if menuOpen { return .handled }
                 guard press.modifiers.contains(.command) else { return .ignored }
@@ -363,6 +390,10 @@ struct RootPaletteView: View {
                     deleteSelectedClip()
                 case .calculatorHistory:
                     deleteSelectedHistoryEntry()
+                case .files:
+                    if let file = selectedFileItem {
+                        core.trashFile(file)
+                    }
                 case .launcher, .emoji:
                     return .ignored
                 }
@@ -457,39 +488,9 @@ struct RootPaletteView: View {
         }
         .shadow(color: Color.black.opacity(0.45), radius: 8, x: 0, y: 4)
         .shadow(color: Color.black.opacity(0.30), radius: 30, x: 0, y: 0)
-        .padding(46)
+        .padding(.horizontal, 100)
+        .padding(.vertical, 70)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onChange(of: vm.focusToken) {
-            searchFocused = true
-            showActions = false
-            showAppMenu = false
-        }
-        .onChange(of: vm.query) {
-            vm.selection = 0
-            scroll = ScrollIntent(kind: .top)
-        }
-        .onChange(of: vm.mode) {
-            vm.selection = 0
-            showActions = false
-            scroll = ScrollIntent(kind: .top)
-        }
-        .onChange(of: vm.resetToken) {
-            scroll = ScrollIntent(kind: .top)
-        }
-        .onChange(of: showActions) {
-            if showActions {
-                showAppMenu = false
-                menuSelection = 0
-            }
-        }
-        .onChange(of: clipFollow) { old, new in
-            guard vm.mode == .clipboard, old.id != nil else { return }
-            if isQueryEmpty, old.id != new.id, let id = new.id,
-                let index = clips.firstIndex(where: { $0.id == id }) {
-                vm.selection = index
-            }
-            scroll = ScrollIntent(kind: .follow)
-        }
     }
 
     @ViewBuilder
@@ -523,10 +524,6 @@ struct RootPaletteView: View {
             )
             .padding(Self.menuInset)
             .transition(Self.menuTransition(.bottomTrailing))
-                app.kind == .application, core.runningApps.isRunning(app)
-            else { return .ignored }
-            core.quit(app)
-            return .handled
         }
     }
 
@@ -704,6 +701,27 @@ struct RootPaletteView: View {
                     }
                 )
             }
+        case .files:
+            if !core.fileSearch.isConnected {
+                EmptyResults(text: core.fileSearch.errorMessage ?? "FSearch daemon not running")
+            } else if isQueryEmpty {
+                EmptyResults(text: "Type to search files across disk…")
+            } else if fileResults.isEmpty {
+                EmptyResults(text: "No files found")
+            } else {
+                let selected = fileResults.indices.contains(selection) ? fileResults[selection] : nil
+                FileList(
+                    results: fileResults,
+                    selectedID: selected?.id,
+                    scroll: scroll,
+                    onSelect: { item in vm.selection = fileResults.firstIndex(of: item) ?? 0 },
+                    onActivate: { item in core.openFile(item) },
+                    onActions: { item in
+                        if let index = fileResults.firstIndex(of: item) { vm.selection = index }
+                        openActions()
+                    }
+                )
+            }
         }
     }
 
@@ -762,6 +780,8 @@ struct RootPaletteView: View {
             return vm.pasteTarget?.pasteTitle ?? "Paste"
         case .calculatorHistory:
             return "Copy Answer"
+        case .files:
+            return selectedFileItem?.isDirectory == true ? "Open Folder" : "Open File"
         case .launcher:
             if calcActionable { return "Copy Answer" }
             switch selectedApp?.kind {
@@ -891,6 +911,9 @@ struct RootPaletteView: View {
         case .emoji:
             guard emojiResults.indices.contains(selection) else { return }
             core.pasteEmoji(emojiResults[selection])
+        case .files:
+            guard fileResults.indices.contains(selection) else { return }
+            core.openFile(fileResults[selection])
         }
     }
 }
